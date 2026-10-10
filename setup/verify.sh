@@ -91,16 +91,19 @@ fi
 # --- Claude Code smoke test ------------------------------------------------------
 explain_claude_error() {
   out="$1"
-  if printf '%s' "$out" | grep -qi 'root'; then
-    bad "Claude Code refused to run with --dangerously-skip-permissions as root"
-  elif printf '%s' "$out" | grep -Eqi 'log ?in|not authenticated|invalid api key|unauthorized|credentials'; then
-    bad "Claude Code is not signed in for $user (run 'claude' once and log in)"
+  first="$(printf '%s' "$out" | grep -v '^[[:space:]]*$' | head -1 | cut -c1-160)"
+  if printf '%s' "$out" | grep -Eqi 'log ?in|not authenticated|invalid api key|unauthorized|credentials'; then
+    wrn "the claude CLI is not signed in for $user (said: $first). Desktop app SSH sessions sign in on their own; to use claude in a terminal here, run: claude auth login"
+    cli_signed_out=1
+  elif printf '%s' "$out" | grep -qiE 'root|sudo'; then
+    bad "Claude Code refused to run with --dangerously-skip-permissions as root (said: $first)"
   else
     bad "Claude Code smoke test failed; last output:"
     printf '%s\n' "$out" | tail -5 | sed 's/^/          /'
   fi
 }
 
+cli_signed_out=0
 if [ "$smoke" = 1 ] && have claude; then
   scratch="$(mktemp -d)"
   out="$(cd "$scratch" && run_limited 180 claude -p --model haiku --dangerously-skip-permissions \
@@ -114,7 +117,7 @@ if [ "$smoke" = 1 ] && have claude; then
     explain_claude_error "$out"
   fi
 
-  if [ "$fable" = 1 ]; then
+  if [ "$fable" = 1 ] && [ $cli_signed_out -eq 0 ]; then
     out="$(cd "$scratch" && run_limited 300 claude -p --dangerously-skip-permissions --output-format stream-json --verbose \
       "Use the fable-escalation subagent to answer in one short line: what does 'set -euo pipefail' do in bash? Return its answer." 2>&1)"
     rc=$?

@@ -72,7 +72,7 @@ alias claude-setup='gh api repos/eladrave/claude-setup/contents/install.sh -H "A
    * `~/.local/bin` is on PATH for non-interactive shells
    * `claude`, `gh`, `gcloud`, `git` are found (and whether one is installed in ~/.local/bin but missing from PATH)
    * `gh` is signed in and git uses its credentials; `gcloud` is signed in, has a default project, and has Application Default Credentials
-   * a smoke test: `claude -p --model haiku --dangerously-skip-permissions` must name `fable-escalation` from the loaded instructions (one short Haiku prompt)
+   * a smoke test: `claude -p --model haiku --dangerously-skip-permissions` must name `fable-escalation` from the loaded instructions (one short Haiku prompt). If the terminal `claude` is not signed in, this is a WARN, not a FAIL: desktop app SSH sessions sign in on their own, and `claude auth login` signs in the terminal CLI.
    * with `--test-fable`: one tiny task routed through the `fable-escalation` subagent (uses some Fable usage)
 
    `--no-smoke` skips the model prompt, `--no-verify` skips the checks, and `--dry-run` runs them without any model usage. The installer exits non-zero if any check FAILs.
