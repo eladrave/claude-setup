@@ -12,7 +12,8 @@
 #   ./install.sh --local                  # this machine
 #   ./install.sh                          # asks for a host
 #
-# Remote one-liner (private repo, needs an authenticated `gh` on this machine):
+# One-liners (see README for which one fits public vs private repos):
+#   curl -fsSL https://raw.githubusercontent.com/eladrave/claude-setup/main/install.sh | bash -s -- vmforclaude
 #   gh api repos/eladrave/claude-setup/contents/install.sh -H "Accept: application/vnd.github.raw" | bash -s -- vmforclaude
 
 set -euo pipefail
@@ -21,7 +22,7 @@ REPO="${CLAUDE_SETUP_REPO:-eladrave/claude-setup}"
 REF="${CLAUDE_SETUP_REF:-main}"
 
 usage() {
-  sed -n '2,17p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//' || true
+  sed -n '2,18p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//' || true
   cat <<'EOF'
 Options:
   --local       Install on this machine as well (or only).
@@ -63,7 +64,7 @@ cleanup() { rm -rf "$workdir"; }
 trap cleanup EXIT
 
 # Locate the payload: the claude/ folder next to this script when run from a
-# checkout, otherwise download the repo via the GitHub CLI (works for private repos).
+# checkout, otherwise download the repo from GitHub.
 script_dir=""
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -71,11 +72,23 @@ fi
 if [ -n "$script_dir" ] && [ -d "$script_dir/claude" ]; then
   src="$script_dir/claude"
 else
-  command -v gh >/dev/null 2>&1 || die "GitHub CLI (gh) is required to download $REPO; install it and run 'gh auth login'"
+  # Try, in order: a signed-in GitHub CLI, a GITHUB_TOKEN, then anonymous curl
+  # (anonymous only works while the repo is public).
   log "Downloading $REPO@$REF ..."
-  gh api "repos/$REPO/tarball/$REF" > "$workdir/repo.tgz" || die "could not download $REPO (check 'gh auth status' and repo access)"
+  tgz="$workdir/repo.tgz"
+  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1 \
+     && gh api "repos/$REPO/tarball/$REF" > "$tgz" 2>/dev/null; then
+    :
+  elif [ -n "${GITHUB_TOKEN:-}" ] \
+     && curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" "https://api.github.com/repos/$REPO/tarball/$REF" -o "$tgz"; then
+    :
+  elif curl -fsSL "https://codeload.github.com/$REPO/tar.gz/$REF" -o "$tgz"; then
+    :
+  else
+    die "could not download $REPO. For a private repo, sign in with 'gh auth login' or set GITHUB_TOKEN."
+  fi
   mkdir -p "$workdir/repo"
-  tar -xzf "$workdir/repo.tgz" -C "$workdir/repo" --strip-components=1
+  tar -xzf "$tgz" -C "$workdir/repo" --strip-components=1
   src="$workdir/repo/claude"
   [ -d "$src" ] || die "downloaded repo has no claude/ folder"
 fi

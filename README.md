@@ -13,31 +13,40 @@ To add more global config later (skills, commands, more agents), put it under `c
 
 ## Install
 
-From my Mac, with `gh` signed in (`gh auth status`):
+**If the repo is public**, plain curl works from any machine:
 
 ```bash
-# one remote machine (any name `ssh` accepts, including Host aliases from ~/.ssh/config)
-gh api repos/eladrave/claude-setup/contents/install.sh -H "Accept: application/vnd.github.raw" | bash -s -- vmforclaude
-
-# several machines, or this Mac too
-gh api repos/eladrave/claude-setup/contents/install.sh -H "Accept: application/vnd.github.raw" | bash -s -- host1 host2 --local
-
-# preview without writing
-gh api repos/eladrave/claude-setup/contents/install.sh -H "Accept: application/vnd.github.raw" | bash -s -- vmforclaude --dry-run
-
-# no arguments: asks for the SSH host
-gh api repos/eladrave/claude-setup/contents/install.sh -H "Accept: application/vnd.github.raw" | bash
+curl -fsSL https://raw.githubusercontent.com/eladrave/claude-setup/main/install.sh | bash -s -- claude@vmforclaude
 ```
 
-Plain `curl https://raw.githubusercontent.com/... | bash` does not work because the repo is private. `gh api` authenticates with the GitHub CLI's stored login instead of a token on the command line.
+**If the repo is private**, anonymous curl gets a 404, so authenticate with the GitHub CLI's stored login:
 
-From a checkout it works the same way: `./install.sh vmforclaude`.
+```bash
+# with gh
+gh api repos/eladrave/claude-setup/contents/install.sh -H "Accept: application/vnd.github.raw" | bash -s -- claude@vmforclaude
 
-Optional alias for `~/.zshrc`:
+# curl, using gh only for the token
+curl -fsSL -H "Authorization: Bearer $(gh auth token)" -H "Accept: application/vnd.github.raw" \
+  https://api.github.com/repos/eladrave/claude-setup/contents/install.sh | GITHUB_TOKEN="$(gh auth token)" bash -s -- claude@vmforclaude
+```
+
+Arguments work the same with every form:
+
+```bash
+... | bash -s -- host1 host2 --local     # several machines, plus this one
+... | bash -s -- vmforclaude --dry-run   # preview without writing
+... | bash                               # no arguments: asks for the SSH host
+```
+
+From a checkout or the zip: `./install.sh claude@vmforclaude`.
+
+The installer downloads the rest of the repo itself, trying a signed-in `gh` first, then `GITHUB_TOKEN`, then anonymous download (public repo only).
+
+Optional alias for `~/.zshrc` (private repo):
 
 ```bash
 alias claude-setup='gh api repos/eladrave/claude-setup/contents/install.sh -H "Accept: application/vnd.github.raw" | bash -s --'
-# then: claude-setup vmforclaude
+# then: claude-setup claude@vmforclaude
 ```
 
 ## What it does
