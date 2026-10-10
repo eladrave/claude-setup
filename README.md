@@ -9,6 +9,7 @@ Everything under [`claude/`](claude/) mirrors the layout of `~/.claude` and is c
 | `claude/CLAUDE.md` | Global working instructions: autonomy, delegation, Opus/Fable model routing, telemetry, knowledge storage, communication |
 | `claude/agents/fable-escalation.md` | Escalation subagent pinned to Claude Fable 5.1 |
 | `setup/tools.sh` | Installs and signs in `gh` and `gcloud` on the target (not copied into `~/.claude`) |
+| `setup/verify.sh` | Checks the target is ready (not copied into `~/.claude`) |
 
 To add more global config later (skills, commands, more agents), put it under `claude/` at the path it should have inside `~/.claude`. The installer picks it up automatically.
 
@@ -36,6 +37,8 @@ Arguments work the same with every form:
 ```bash
 ... | bash -s -- host1 host2 --local     # several machines, plus this one
 ... | bash -s -- vmforclaude --dry-run   # preview without writing
+... | bash -s -- --local                 # run inside a terminal on the target itself (e.g. Codex app over SSH)
+... | bash -s -- vmforclaude --verify-only   # only run the checks
 ... | bash                               # no arguments: asks for the SSH host
 ```
 
@@ -63,6 +66,17 @@ alias claude-setup='gh api repos/eladrave/claude-setup/contents/install.sh -H "A
    * Signs in to `gcloud` if needed (`--no-launch-browser`: open the URL, paste the code back), optionally sets up Application Default Credentials, and reports the default project.
    * With `--dry-run`, only reports what is installed and signed in.
 
+6. Runs [`setup/verify.sh`](setup/verify.sh) on the target over a plain non-interactive SSH command, the same way Codex remote runs commands, and prints PASS / WARN / FAIL for:
+   * the user is not root (Claude Code disables `--dangerously-skip-permissions` for root)
+   * `CLAUDE.md` and the `fable-escalation` agent are in place
+   * `~/.local/bin` is on PATH for non-interactive shells
+   * `claude`, `gh`, `gcloud`, `git` (and optionally `codex`) are found
+   * `gh` is signed in and git uses its credentials; `gcloud` is signed in, has a default project, and has Application Default Credentials
+   * a smoke test: `claude -p --model haiku --dangerously-skip-permissions` must name `fable-escalation` from the loaded instructions (one short Haiku prompt)
+   * with `--test-fable`: one tiny task routed through the `fable-escalation` subagent (uses some Fable usage)
+
+   `--no-smoke` skips the model prompt, `--no-verify` skips the checks, and `--dry-run` runs them without any model usage. The installer exits non-zero if any check FAILs.
+
 It never deletes files and only touches the paths that exist under `claude/`. Running it again is safe: identical files, installed tools, and existing logins are left alone.
 
 Logins need a terminal. The installer reads from your terminal even when run as `curl ... | bash`; without one it installs the tools and skips the logins.
@@ -78,9 +92,10 @@ To check, run `!whoami` inside a Claude session on the remote, or `ps -o user= -
 
 ## After installing
 
-Start a new `claude` session on the target and run `/memory` (the user `CLAUDE.md` should be listed) and `/agents` (`fable-escalation` should be listed).
+The checks cover what you would otherwise test by hand. Two things remain manual, once per machine, inside `claude`:
 
-The default model is not part of this config. Set it once per machine with `/model opus` and `/effort high`.
+* `/model opus` and `/effort high` (the default model is not part of this config)
+* the first interactive `claude --dangerously-skip-permissions` run may ask you to accept the bypass-permissions warning
 
 ## Not covered
 

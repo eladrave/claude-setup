@@ -12,8 +12,11 @@
 #   ./install.sh --local                  # this machine
 #   ./install.sh                          # asks for a host
 #
-# Then, on each target, installs gh and gcloud if missing (no sudo needed) and
-# walks you through signing in to both. Skip that with --no-tools.
+# Then, on each target, installs gh and gcloud if missing (no sudo needed),
+# walks you through signing in to both, and verifies the result: user is not
+# root, config files present, tools on PATH for non-interactive SSH, gh and
+# gcloud signed in, and a one-prompt Claude Code smoke test.
+#   ./install.sh --verify-only claude@vmforclaude    # re-check without installing
 #
 # One-liners (see README for which one fits public vs private repos):
 #   curl -fsSL https://raw.githubusercontent.com/eladrave/claude-setup/main/install.sh | bash -s -- vmforclaude
@@ -25,12 +28,16 @@ REPO="${CLAUDE_SETUP_REPO:-eladrave/claude-setup}"
 REF="${CLAUDE_SETUP_REF:-main}"
 
 usage() {
-  sed -n '2,21p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//' || true
+  sed -n '2,25p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//' || true
   cat <<'EOF'
 Options:
   --local       Install on this machine as well (or only).
   --dry-run     Show what would change without writing anything.
   --no-tools    Do not install or sign in to gh and gcloud.
+  --verify-only Only run the checks; install nothing.
+  --no-verify   Skip the checks.
+  --no-smoke    Run the checks but skip the Claude Code prompt (no model usage).
+  --test-fable  Also run one tiny task through the fable-escalation agent (uses Fable).
   -h, --help    Show this help.
 EOF
 }
@@ -42,11 +49,19 @@ hosts=()
 do_local=0
 dry_run=0
 do_tools=1
+do_apply=1
+do_verify=1
+smoke=1
+test_fable=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --local)   do_local=1 ;;
     --dry-run) dry_run=1 ;;
     --no-tools) do_tools=0 ;;
+    --verify-only) do_apply=0; do_tools=0 ;;
+    --no-verify) do_verify=0 ;;
+    --no-smoke) smoke=0 ;;
+    --test-fable) test_fable=1 ;;
     -h|--help) usage; exit 0 ;;
     --)        shift; hosts+=("$@"); break ;;
     -*)        die "unknown option: $1 (see --help)" ;;
@@ -106,6 +121,13 @@ if [ $do_tools -eq 1 ] && [ ! -f "$tools" ]; then
 fi
 tools_mode=install
 [ $dry_run -eq 1 ] && tools_mode=check
+verify="$root/setup/verify.sh"
+if [ $do_verify -eq 1 ] && [ ! -f "$verify" ]; then
+  log "Note: $verify not found, skipping checks."
+  do_verify=0
+fi
+# A dry run must not spend model usage.
+if [ $dry_run -eq 1 ]; then smoke=0; test_fable=0; fi
 
 # Interactive steps (logins) need the real terminal: stdin is the script itself
 # when run as `curl ... | bash`.
@@ -164,10 +186,16 @@ failures=0
 if [ $do_local -eq 1 ]; then
   log ""
   log "== local ($(hostname)) =="
-  bash -c "$apply_script" apply "$payload" "$dry_run" || failures=$((failures + 1))
+  if [ $do_apply -eq 1 ]; then
+    bash -c "$apply_script" apply "$payload" "$dry_run" || failures=$((failures + 1))
+  fi
   if [ $do_tools -eq 1 ]; then
     log "  -- gh and gcloud --"
     bash "$tools" "$tools_mode" < "$tty_in" || failures=$((failures + 1))
+  fi
+  if [ $do_verify -eq 1 ]; then
+    log "  -- checks --"
+    bash "$verify" "$smoke" "$test_fable" < /dev/null || failures=$((failures + 1))
   fi
 fi
 
@@ -179,12 +207,14 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
   ctl="$workdir/ssh-%C"
   sshopts=(-o ControlMaster=auto -o "ControlPath=$ctl" -o ControlPersist=60)
   remote_tar="/tmp/claude-setup-$$-$RANDOM.tar"
-  if ssh "${sshopts[@]}" "$host" "cat > $remote_tar" < "$payload" \
-     && printf '%s' "$apply_script" | ssh "${sshopts[@]}" "$host" "bash -s -- $remote_tar $dry_run; rc=\$?; rm -f $remote_tar; exit \$rc"; then
-    :
-  else
-    log "  FAILED on $host"
-    failures=$((failures + 1))
+  if [ $do_apply -eq 1 ]; then
+    if ssh "${sshopts[@]}" "$host" "cat > $remote_tar" < "$payload" \
+       && printf '%s' "$apply_script" | ssh "${sshopts[@]}" "$host" "bash -s -- $remote_tar $dry_run; rc=\$?; rm -f $remote_tar; exit \$rc"; then
+      :
+    else
+      log "  FAILED on $host"
+      failures=$((failures + 1))
+    fi
   fi
   if [ $do_tools -eq 1 ]; then
     log "  -- gh and gcloud --"
@@ -199,15 +229,28 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
       failures=$((failures + 1))
     fi
   fi
+  if [ $do_verify -eq 1 ]; then
+    log "  -- checks --"
+    remote_verify="/tmp/claude-setup-verify-$$-$RANDOM.sh"
+    # Plain non-interactive SSH command, the same way Codex remote runs commands.
+    if ssh "${sshopts[@]}" "$host" "cat > $remote_verify" < "$verify" \
+       && ssh "${sshopts[@]}" -T "$host" "bash $remote_verify $smoke $test_fable; rc=\$?; rm -f $remote_verify; exit \$rc" < /dev/null; then
+      :
+    else
+      failures=$((failures + 1))
+    fi
+  fi
   ssh "${sshopts[@]}" -O exit "$host" >/dev/null 2>&1 || true
 done
 
 log ""
 if [ $failures -gt 0 ]; then
-  die "$failures target(s) failed"
+  die "$failures step(s) failed or reported problems (see FAIL lines above)"
 fi
 if [ $dry_run -eq 1 ]; then
   log "Dry run complete. Nothing was written."
+elif [ $do_apply -eq 0 ]; then
+  log "Checks complete."
 else
-  log "Done. Start a new 'claude' session on each target and run /memory and /agents to confirm."
+  log "Done. Set the default model once per machine inside claude: /model opus and /effort high."
 fi
