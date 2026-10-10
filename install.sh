@@ -12,7 +12,7 @@
 #   ./install.sh --local                  # this machine
 #   ./install.sh                          # asks for a host
 #
-# Then, on each target, installs gh and gcloud if missing (no sudo needed),
+# Then, on each target, installs Claude Code, gh and gcloud if missing (no sudo),
 # walks you through signing in to both, and verifies the result: user is not
 # root, config files present, tools on PATH for non-interactive SSH, gh and
 # gcloud signed in, and a one-prompt Claude Code smoke test.
@@ -33,7 +33,7 @@ usage() {
 Options:
   --local       Install on this machine as well (or only).
   --dry-run     Show what would change without writing anything.
-  --no-tools    Do not install or sign in to gh and gcloud.
+  --no-tools    Do not install Claude Code, gh, gcloud or sign in to gh and gcloud.
   --verify-only Only run the checks; install nothing.
   --no-verify   Skip the checks.
   --no-smoke    Run the checks but skip the Claude Code prompt (no model usage).
@@ -190,12 +190,22 @@ if [ $do_local -eq 1 ]; then
     bash -c "$apply_script" apply "$payload" "$dry_run" || failures=$((failures + 1))
   fi
   if [ $do_tools -eq 1 ]; then
-    log "  -- gh and gcloud --"
+    log "  -- tools: claude, gh, gcloud --"
     bash "$tools" "$tools_mode" < "$tty_in" || failures=$((failures + 1))
   fi
   if [ $do_verify -eq 1 ]; then
     log "  -- checks --"
-    bash "$verify" "$smoke" "$test_fable" < /dev/null || failures=$((failures + 1))
+    if [ "$(uname -s)" = Linux ]; then
+      # Fresh environment that loads ~/.bashrc the way sshd's non-interactive
+      # commands do, so PATH changes made above are seen, as Codex would see them.
+      env -i HOME="$HOME" USER="$(id -un)" LOGNAME="$(id -un)" SHELL="${SHELL:-/bin/bash}" \
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        ${CLAUDE_CONFIG_DIR:+CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR"} \
+        bash -c '. "$HOME/.bashrc" >/dev/null 2>&1 || true; exec bash "$@"' verify "$verify" "$smoke" "$test_fable" < /dev/null \
+        || failures=$((failures + 1))
+    else
+      bash "$verify" "$smoke" "$test_fable" < /dev/null || failures=$((failures + 1))
+    fi
   fi
 fi
 
@@ -217,7 +227,7 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
     fi
   fi
   if [ $do_tools -eq 1 ]; then
-    log "  -- gh and gcloud --"
+    log "  -- tools: claude, gh, gcloud --"
     remote_tools="/tmp/claude-setup-tools-$$-$RANDOM.sh"
     tflag=-T
     [ "$tty_in" = /dev/tty ] && tflag=-t
@@ -225,7 +235,7 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
        && ssh "${sshopts[@]}" $tflag "$host" "bash $remote_tools $tools_mode; rc=\$?; rm -f $remote_tools; exit \$rc" < "$tty_in"; then
       :
     else
-      log "  gh/gcloud step had problems on $host (see messages above)"
+      log "  tools step had problems on $host (see messages above)"
       failures=$((failures + 1))
     fi
   fi

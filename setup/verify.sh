@@ -51,15 +51,17 @@ else wrn "~/.local/bin is NOT on PATH for non-interactive shells (Codex remote m
 
 # --- commands ------------------------------------------------------------------
 for t in claude gh gcloud git; do
-  if have "$t"; then ok "$t found: $(command -v "$t")"
+  if have "$t"; then
+    ok "$t found: $(command -v "$t")"
+  elif [ -x "$BIN/$t" ]; then
+    bad "$t is installed at ~/.local/bin/$t but ~/.local/bin is not on PATH for non-interactive shells"
   else
     case "$t" in
-      claude) bad "claude not found on PATH (install as this user: curl -fsSL https://claude.ai/install.sh | bash)" ;;
+      claude) bad "claude not installed for $user (rerun the installer, or: curl -fsSL https://claude.ai/install.sh | bash)" ;;
       *)      bad "$t not found on PATH" ;;
     esac
   fi
 done
-if have codex; then ok "codex found: $(command -v codex)"; else wrn "codex CLI not found (only needed if your Codex setup runs it on this machine)"; fi
 
 # --- gh ------------------------------------------------------------------------
 if have gh; then

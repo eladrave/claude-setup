@@ -60,7 +60,7 @@ alias claude-setup='gh api repos/eladrave/claude-setup/contents/install.sh -H "A
 3. On the target, resolves the config directory as `${CLAUDE_CONFIG_DIR:-~/.claude}` for the SSH login user.
 4. For each file: skips it if identical, otherwise backs up the existing copy to `~/.claude/claude-setup-backups/<timestamp>/` and writes the new one.
 5. Runs [`setup/tools.sh`](setup/tools.sh) on the target (skip with `--no-tools`):
-   * Installs `gh` and `gcloud` if missing, without sudo. On Linux, `gh` goes to `~/.local/bin` and `gcloud` to `~/google-cloud-sdk` (with `gcloud`, `gsutil`, `bq` linked into `~/.local/bin`). On macOS it uses Homebrew.
+   * Installs Claude Code (native installer, ~/.local/bin/claude), `gh` and `gcloud` if missing, without sudo. On Linux, `gh` goes to `~/.local/bin` and `gcloud` to `~/google-cloud-sdk` (with `gcloud`, `gsutil`, `bq` linked into `~/.local/bin`). On macOS it uses Homebrew.
    * Puts `~/.local/bin` on PATH at the top of `~/.bashrc` and in `~/.profile`, so non-interactive SSH commands (Codex remote) find the tools.
    * Signs in to `gh` if needed (device code: open the URL on any device, enter the code) and runs `gh auth setup-git`.
    * Signs in to `gcloud` if needed (`--no-launch-browser`: open the URL, paste the code back), optionally sets up Application Default Credentials, and reports the default project.
@@ -70,7 +70,7 @@ alias claude-setup='gh api repos/eladrave/claude-setup/contents/install.sh -H "A
    * the user is not root (Claude Code disables `--dangerously-skip-permissions` for root)
    * `CLAUDE.md` and the `fable-escalation` agent are in place
    * `~/.local/bin` is on PATH for non-interactive shells
-   * `claude`, `gh`, `gcloud`, `git` (and optionally `codex`) are found
+   * `claude`, `gh`, `gcloud`, `git` are found (and whether one is installed in ~/.local/bin but missing from PATH)
    * `gh` is signed in and git uses its credentials; `gcloud` is signed in, has a default project, and has Application Default Credentials
    * a smoke test: `claude -p --model haiku --dangerously-skip-permissions` must name `fable-escalation` from the loaded instructions (one short Haiku prompt)
    * with `--test-fable`: one tiny task routed through the `fable-escalation` subagent (uses some Fable usage)
@@ -101,5 +101,5 @@ The checks cover what you would otherwise test by hand. Two things remain manual
 
 * Claude Code cloud sessions (claude.ai/code) do not read `~/.claude`. Commit `CLAUDE.md` and `.claude/agents/` into each repo, or write them from the cloud environment's setup script.
 * The `codex-drive-as-knowledge` skill is enabled on my claude.ai account, not installed by this repo.
-* Claude Code itself and the Codex CLI are not installed by this repo.
+* The Codex CLI is not installed or checked; the Codex app does not need it on the remote.
 * With `--dangerously-skip-permissions`, the agent can do anything these `gh` and `gcloud` logins allow. Prefer a fine-grained GitHub token and a scoped Google service account for an unattended user.

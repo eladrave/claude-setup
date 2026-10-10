@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# claude-setup tools step: make sure the GitHub CLI (gh) and Google Cloud CLI
-# (gcloud) are installed for the current user and signed in.
+# claude-setup tools step: make sure Claude Code, the GitHub CLI (gh) and the
+# Google Cloud CLI (gcloud) are installed for the current user, and that gh and
+# gcloud are signed in. (Claude Code signs in on its first interactive run.)
 #
 # Runs on the target machine as the user Claude Code runs as. Needs no sudo:
 # on Linux, missing tools go into ~/.local/bin (gh) and ~/google-cloud-sdk (gcloud).
@@ -51,6 +52,20 @@ ensure_path_rc() {
     *zsh) rc="$HOME/.zshenv"; [ -f "$rc" ] || : > "$rc"
           grep -q '# claude-setup' "$rc" || { printf '%s\n' "$line" >> "$rc"; say "added ~/.local/bin to PATH in ~/.zshenv"; } ;;
   esac
+}
+
+# --- Claude Code ---------------------------------------------------------------
+install_claude() {
+  # Native installer: per-user, no sudo, installs to ~/.local/bin/claude.
+  say "installing Claude Code for $(id -un)"
+  curl -fsSL https://claude.ai/install.sh | bash >"$tmp/claude-install.log" 2>&1 \
+    || { warn "Claude Code install failed; see: curl -fsSL https://claude.ai/install.sh | bash"; tail -5 "$tmp/claude-install.log" >&2; return 1; }
+  if have claude || [ -x "$BIN/claude" ]; then
+    say "installed Claude Code: $( (claude --version || "$BIN/claude" --version) 2>/dev/null | head -1)"
+    say "Claude Code: run 'claude' once in a terminal to sign in"
+  else
+    warn "Claude Code installer finished but claude was not found"; return 1
+  fi
 }
 
 # --- gh ----------------------------------------------------------------------
@@ -147,6 +162,7 @@ status() {
 }
 
 if [ "$mode" = check ]; then
+  status claude
   status gh
   have gh && { gh auth status >/dev/null 2>&1 && say "gh: signed in" || say "gh: NOT signed in"; }
   status gcloud
@@ -160,6 +176,7 @@ fi
 [ "$os" = Linux ] && ensure_path_rc
 
 failed=0
+have claude || install_claude || failed=1
 have gh     || install_gh     || failed=1
 if have gh; then login_gh || failed=1; fi
 have gcloud || install_gcloud || failed=1
