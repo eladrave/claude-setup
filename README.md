@@ -1,6 +1,6 @@
 # claude-setup
 
-My global Claude Code configuration, plus an installer that puts it on any machine I run `claude` on.
+My global Claude Code configuration, plus an installer that puts it on any machine I run `claude` on and makes sure `gh` and `gcloud` are installed and signed in there.
 
 Everything under [`claude/`](claude/) mirrors the layout of `~/.claude` and is copied there as is:
 
@@ -8,6 +8,7 @@ Everything under [`claude/`](claude/) mirrors the layout of `~/.claude` and is c
 | --- | --- |
 | `claude/CLAUDE.md` | Global working instructions: autonomy, delegation, Opus/Fable model routing, telemetry, knowledge storage, communication |
 | `claude/agents/fable-escalation.md` | Escalation subagent pinned to Claude Fable 5.1 |
+| `setup/tools.sh` | Installs and signs in `gh` and `gcloud` on the target (not copied into `~/.claude`) |
 
 To add more global config later (skills, commands, more agents), put it under `claude/` at the path it should have inside `~/.claude`. The installer picks it up automatically.
 
@@ -51,12 +52,20 @@ alias claude-setup='gh api repos/eladrave/claude-setup/contents/install.sh -H "A
 
 ## What it does
 
-1. Downloads this repo with `gh` (or uses the checkout it runs from).
+1. Downloads this repo (signed-in `gh`, then `GITHUB_TOKEN`, then anonymous), or uses the checkout it runs from.
 2. Copies the `claude/` payload to each target over one SSH connection.
 3. On the target, resolves the config directory as `${CLAUDE_CONFIG_DIR:-~/.claude}` for the SSH login user.
 4. For each file: skips it if identical, otherwise backs up the existing copy to `~/.claude/claude-setup-backups/<timestamp>/` and writes the new one.
+5. Runs [`setup/tools.sh`](setup/tools.sh) on the target (skip with `--no-tools`):
+   * Installs `gh` and `gcloud` if missing, without sudo. On Linux, `gh` goes to `~/.local/bin` and `gcloud` to `~/google-cloud-sdk` (with `gcloud`, `gsutil`, `bq` linked into `~/.local/bin`). On macOS it uses Homebrew.
+   * Puts `~/.local/bin` on PATH at the top of `~/.bashrc` and in `~/.profile`, so non-interactive SSH commands (Codex remote) find the tools.
+   * Signs in to `gh` if needed (device code: open the URL on any device, enter the code) and runs `gh auth setup-git`.
+   * Signs in to `gcloud` if needed (`--no-launch-browser`: open the URL, paste the code back), optionally sets up Application Default Credentials, and reports the default project.
+   * With `--dry-run`, only reports what is installed and signed in.
 
-It never deletes files and only touches the paths that exist under `claude/`. Running it again is safe.
+It never deletes files and only touches the paths that exist under `claude/`. Running it again is safe: identical files, installed tools, and existing logins are left alone.
+
+Logins need a terminal. The installer reads from your terminal even when run as `curl ... | bash`; without one it installs the tools and skips the logins.
 
 ## Which user gets the config
 
@@ -77,3 +86,5 @@ The default model is not part of this config. Set it once per machine with `/mod
 
 * Claude Code cloud sessions (claude.ai/code) do not read `~/.claude`. Commit `CLAUDE.md` and `.claude/agents/` into each repo, or write them from the cloud environment's setup script.
 * The `codex-drive-as-knowledge` skill is enabled on my claude.ai account, not installed by this repo.
+* Claude Code itself and the Codex CLI are not installed by this repo.
+* With `--dangerously-skip-permissions`, the agent can do anything these `gh` and `gcloud` logins allow. Prefer a fine-grained GitHub token and a scoped Google service account for an unattended user.

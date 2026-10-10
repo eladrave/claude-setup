@@ -12,6 +12,9 @@
 #   ./install.sh --local                  # this machine
 #   ./install.sh                          # asks for a host
 #
+# Then, on each target, installs gh and gcloud if missing (no sudo needed) and
+# walks you through signing in to both. Skip that with --no-tools.
+#
 # One-liners (see README for which one fits public vs private repos):
 #   curl -fsSL https://raw.githubusercontent.com/eladrave/claude-setup/main/install.sh | bash -s -- vmforclaude
 #   gh api repos/eladrave/claude-setup/contents/install.sh -H "Accept: application/vnd.github.raw" | bash -s -- vmforclaude
@@ -22,11 +25,12 @@ REPO="${CLAUDE_SETUP_REPO:-eladrave/claude-setup}"
 REF="${CLAUDE_SETUP_REF:-main}"
 
 usage() {
-  sed -n '2,18p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//' || true
+  sed -n '2,21p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//' || true
   cat <<'EOF'
 Options:
   --local       Install on this machine as well (or only).
   --dry-run     Show what would change without writing anything.
+  --no-tools    Do not install or sign in to gh and gcloud.
   -h, --help    Show this help.
 EOF
 }
@@ -37,10 +41,12 @@ die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
 hosts=()
 do_local=0
 dry_run=0
+do_tools=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --local)   do_local=1 ;;
     --dry-run) dry_run=1 ;;
+    --no-tools) do_tools=0 ;;
     -h|--help) usage; exit 0 ;;
     --)        shift; hosts+=("$@"); break ;;
     -*)        die "unknown option: $1 (see --help)" ;;
@@ -70,7 +76,7 @@ if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
 if [ -n "$script_dir" ] && [ -d "$script_dir/claude" ]; then
-  src="$script_dir/claude"
+  root="$script_dir"
 else
   # Try, in order: a signed-in GitHub CLI, a GITHUB_TOKEN, then anonymous curl
   # (anonymous only works while the repo is public).
@@ -89,9 +95,22 @@ else
   fi
   mkdir -p "$workdir/repo"
   tar -xzf "$tgz" -C "$workdir/repo" --strip-components=1
-  src="$workdir/repo/claude"
-  [ -d "$src" ] || die "downloaded repo has no claude/ folder"
+  root="$workdir/repo"
+  [ -d "$root/claude" ] || die "downloaded repo has no claude/ folder"
 fi
+src="$root/claude"
+tools="$root/setup/tools.sh"
+if [ $do_tools -eq 1 ] && [ ! -f "$tools" ]; then
+  log "Note: $tools not found, skipping the gh/gcloud step."
+  do_tools=0
+fi
+tools_mode=install
+[ $dry_run -eq 1 ] && tools_mode=check
+
+# Interactive steps (logins) need the real terminal: stdin is the script itself
+# when run as `curl ... | bash`.
+tty_in=/dev/null
+if [ -r /dev/tty ] && { : < /dev/tty; } 2>/dev/null; then tty_in=/dev/tty; fi
 
 # Bundle the payload once.
 payload="$workdir/payload.tar"
@@ -146,6 +165,10 @@ if [ $do_local -eq 1 ]; then
   log ""
   log "== local ($(hostname)) =="
   bash -c "$apply_script" apply "$payload" "$dry_run" || failures=$((failures + 1))
+  if [ $do_tools -eq 1 ]; then
+    log "  -- gh and gcloud --"
+    bash "$tools" "$tools_mode" < "$tty_in" || failures=$((failures + 1))
+  fi
 fi
 
 # ${arr[@]+...} keeps bash 3.2 (macOS default) happy with an empty array under set -u.
@@ -162,6 +185,19 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
   else
     log "  FAILED on $host"
     failures=$((failures + 1))
+  fi
+  if [ $do_tools -eq 1 ]; then
+    log "  -- gh and gcloud --"
+    remote_tools="/tmp/claude-setup-tools-$$-$RANDOM.sh"
+    tflag=-T
+    [ "$tty_in" = /dev/tty ] && tflag=-t
+    if ssh "${sshopts[@]}" "$host" "cat > $remote_tools" < "$tools" \
+       && ssh "${sshopts[@]}" $tflag "$host" "bash $remote_tools $tools_mode; rc=\$?; rm -f $remote_tools; exit \$rc" < "$tty_in"; then
+      :
+    else
+      log "  gh/gcloud step had problems on $host (see messages above)"
+      failures=$((failures + 1))
+    fi
   fi
   ssh "${sshopts[@]}" -O exit "$host" >/dev/null 2>&1 || true
 done
