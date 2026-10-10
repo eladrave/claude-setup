@@ -92,7 +92,11 @@ To check, run `!whoami` inside a Claude session on the remote, or `ps -o user= -
 
 ## After installing
 
-The checks cover what you would otherwise test by hand. Two things remain manual, once per machine, inside `claude`:
+Claude Code reads this config when a session starts, so start a new session after installing. Sessions that were already open, including desktop app SSH sessions, keep the old config.
+
+To confirm a session loaded it, ask: *"List the subagent types you can launch, and quote the first heading of your user CLAUDE.md."* It should list `fable-escalation` and quote "Working instructions for Claude Code and Claude".
+
+The checks cover the rest of what you would otherwise test by hand. Two things remain manual, once per machine, inside `claude`:
 
 * `/model opus` and `/effort high` (the default model is not part of this config)
 * the first interactive `claude --dangerously-skip-permissions` run may ask you to accept the bypass-permissions warning

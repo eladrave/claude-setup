@@ -262,5 +262,6 @@ if [ $dry_run -eq 1 ]; then
 elif [ $do_apply -eq 0 ]; then
   log "Checks complete."
 else
-  log "Done. Set the default model once per machine inside claude: /model opus and /effort high."
+  log "Done. Start a NEW Claude session (CLI or desktop SSH session) to load the config;"
+  log "sessions that were already open keep the old one. Once per machine, inside claude: /model opus and /effort high."
 fi
