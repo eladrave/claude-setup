@@ -38,6 +38,11 @@ Options:
   --no-verify   Skip the checks.
   --no-smoke    Run the checks but skip the Claude Code prompt (no model usage).
   --test-fable  Also run one tiny task through the fable-escalation agent (uses Fable).
+  --bypass-permissions
+                Also set Bypass permissions as the default mode in ~/.claude/settings.json
+                (for dedicated machines; never works for root).
+  --no-settings Do not touch ~/.claude/settings.json (default: merge model "opus" and
+                effortLevel "high" into it, keeping every other key).
   -h, --help    Show this help.
 EOF
 }
@@ -53,6 +58,8 @@ do_apply=1
 do_verify=1
 smoke=1
 test_fable=0
+bypass=0
+do_settings=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --local)   do_local=1 ;;
@@ -62,6 +69,8 @@ while [ $# -gt 0 ]; do
     --no-verify) do_verify=0 ;;
     --no-smoke) smoke=0 ;;
     --test-fable) test_fable=1 ;;
+    --bypass-permissions) bypass=1 ;;
+    --no-settings) do_settings=0 ;;
     -h|--help) usage; exit 0 ;;
     --)        shift; hosts+=("$@"); break ;;
     -*)        die "unknown option: $1 (see --help)" ;;
@@ -136,8 +145,21 @@ if [ -r /dev/tty ] && { : < /dev/tty; } 2>/dev/null; then tty_in=/dev/tty; fi
 
 # Bundle the payload once.
 payload="$workdir/payload.tar"
-tar -C "$src" -cf "$payload" .
-count="$(tar -tf "$payload" | grep -vc '/$' || true)"
+# Settings keys to merge into the target's settings.json (other keys are kept).
+settings_json=''
+if [ $do_settings -eq 1 ]; then
+  if [ $bypass -eq 1 ]; then
+    settings_json='{"model": "opus", "effortLevel": "high", "permissions": {"defaultMode": "bypassPermissions"}, "skipDangerousModePermissionPrompt": true}'
+  else
+    settings_json='{"model": "opus", "effortLevel": "high"}'
+  fi
+fi
+stage="$workdir/stage"
+mkdir -p "$stage"
+cp -R "$src/." "$stage/"
+[ -n "$settings_json" ] && printf '%s\n' "$settings_json" > "$stage/.claude-setup-settings.json"
+tar -C "$stage" -cf "$payload" .
+count="$(tar -tf "$payload" | grep -v '/$' | grep -vc 'claude-setup-settings' || true)"
 log "Payload: $count file(s) from $src"
 
 # Runs on the target. Args: <payload tar path> <dry-run 0|1>
@@ -155,6 +177,7 @@ changed=0
 backed_up=0
 cd "$tmp"
 while IFS= read -r f; do
+  [ "$f" = ".claude-setup-settings.json" ] && continue
   dest="$cfg/$f"
   if [ -f "$dest" ] && cmp -s "$f" "$dest"; then
     echo "  unchanged  $f"
@@ -177,6 +200,60 @@ while IFS= read -r f; do
   cp "$f" "$dest"
   echo "  $action  $f"
 done < <(find . -type f | sed "s|^\./||" | sort)
+if [ -f "$tmp/.claude-setup-settings.json" ]; then
+  py="$(command -v python3 || true)"
+  if [ -z "$py" ] && [ -f "$cfg/settings.json" ]; then
+    echo "  WARNING: python3 not found; settings.json exists, so it was not changed. Add these keys by hand:"
+    sed "s/^/    /" "$tmp/.claude-setup-settings.json"
+  elif [ -z "$py" ]; then
+    if [ "$dry" = 1 ]; then echo "  would add     settings.json"; else
+      mkdir -p "$cfg"; cp "$tmp/.claude-setup-settings.json" "$cfg/settings.json"; echo "  added  settings.json"; changed=$((changed + 1)); fi
+  else
+    result="$("$py" - "$cfg/settings.json" "$tmp/.claude-setup-settings.json" "$dry" "$bk" <<"PY"
+import json, os, shutil, sys
+dst, src, dry, bk = sys.argv[1], sys.argv[2], sys.argv[3] == "1", sys.argv[4]
+cur = {}
+if os.path.exists(dst):
+    with open(dst) as f:
+        txt = f.read().strip()
+    cur = json.loads(txt) if txt else {}
+with open(src) as f:
+    want = json.load(f)
+changes = []
+def merge(a, b, path=""):
+    for k, v in b.items():
+        key = path + k
+        if isinstance(v, dict) and isinstance(a.get(k), dict):
+            merge(a[k], v, key + ".")
+        elif a.get(k) != v:
+            changes.append("%s: %s -> %s" % (key, json.dumps(a.get(k)), json.dumps(v)))
+            a[k] = v
+merged = json.loads(json.dumps(cur))
+merge(merged, want)
+if not changes:
+    print("unchanged")
+elif dry:
+    print("would set " + "; ".join(changes))
+else:
+    if os.path.exists(dst):
+        os.makedirs(bk, exist_ok=True)
+        shutil.copy2(dst, os.path.join(bk, "settings.json"))
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    tmpf = dst + ".claude-setup.tmp"
+    with open(tmpf, "w") as f:
+        json.dump(merged, f, indent=2)
+        f.write("\n")
+    os.replace(tmpf, dst)
+    print("set " + "; ".join(changes))
+PY
+)" || { echo "  WARNING: could not merge settings.json (is it valid JSON?); left unchanged"; result=""; }
+    case "$result" in
+      unchanged)   echo "  unchanged  settings.json (keys already set)" ;;
+      "would set"*) echo "  settings.json: $result" ;;
+      set*)        echo "  settings.json: $result"; changed=$((changed + 1)); [ -f "$bk/settings.json" ] && backed_up=1 ;;
+    esac
+  fi
+fi
 if [ "$backed_up" = 1 ]; then echo "  backups: $bk"; fi
 echo "  $changed file(s) changed"
 '
@@ -201,10 +278,10 @@ if [ $do_local -eq 1 ]; then
       env -i HOME="$HOME" USER="$(id -un)" LOGNAME="$(id -un)" SHELL="${SHELL:-/bin/bash}" \
         PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
         ${CLAUDE_CONFIG_DIR:+CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR"} \
-        bash -c '. "$HOME/.bashrc" >/dev/null 2>&1 || true; exec bash "$@"' verify "$verify" "$smoke" "$test_fable" < /dev/null \
+        bash -c '. "$HOME/.bashrc" >/dev/null 2>&1 || true; exec bash "$@"' verify "$verify" "$smoke" "$test_fable" "$bypass" < /dev/null \
         || failures=$((failures + 1))
     else
-      bash "$verify" "$smoke" "$test_fable" < /dev/null || failures=$((failures + 1))
+      bash "$verify" "$smoke" "$test_fable" "$bypass" < /dev/null || failures=$((failures + 1))
     fi
   fi
 fi
@@ -244,7 +321,7 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
     remote_verify="/tmp/claude-setup-verify-$$-$RANDOM.sh"
     # Plain non-interactive SSH command, the same way Codex remote runs commands.
     if ssh "${sshopts[@]}" "$host" "cat > $remote_verify" < "$verify" \
-       && ssh "${sshopts[@]}" -T "$host" "bash $remote_verify $smoke $test_fable; rc=\$?; rm -f $remote_verify; exit \$rc" < /dev/null; then
+       && ssh "${sshopts[@]}" -T "$host" "bash $remote_verify $smoke $test_fable $bypass; rc=\$?; rm -f $remote_verify; exit \$rc" < /dev/null; then
       :
     else
       failures=$((failures + 1))
@@ -263,5 +340,5 @@ elif [ $do_apply -eq 0 ]; then
   log "Checks complete."
 else
   log "Done. Start a NEW Claude session (CLI or desktop SSH session) to load the config;"
-  log "sessions that were already open keep the old one. Once per machine, inside claude: /model opus and /effort high."
+  log "sessions that were already open keep the old one."
 fi

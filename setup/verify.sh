@@ -3,14 +3,16 @@
 # this config. Runs on the target as the user Claude Code runs as, in a
 # non-interactive shell (the same kind of shell Codex remote and similar tools use).
 #
-# Usage: verify.sh [smoke 0|1] [fable 0|1]
+# Usage: verify.sh [smoke 0|1] [fable 0|1] [bypass 0|1]
 #   smoke  1 = ask Claude Code (Haiku, one short prompt) to prove it loaded CLAUDE.md
 #   fable  1 = also run one tiny task through the fable-escalation subagent (costs Fable usage)
+#   bypass 1 = Bypass permissions was requested as the default mode; FAIL if it is not set
 
 set -u
 
 smoke="${1:-1}"
 fable="${2:-0}"
+want_bypass="${3:-0}"
 
 BIN="$HOME/.local/bin"
 case ":$PATH:" in *":$BIN:"*) path_ok=1 ;; *) path_ok=0 ;; esac
@@ -43,6 +45,37 @@ if [ -s "$agent" ]; then
   else wrn "fable-escalation agent present but its model is not fable"; fi
 else
   bad "$agent missing"
+fi
+
+# --- settings.json ----------------------------------------------------------------
+settings="$cfg/settings.json"
+if [ -f "$settings" ] && have python3 && ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$settings" 2>/dev/null; then
+  bad "$settings is not valid JSON (Claude Code may ignore or reject it); fix it, then rerun"
+elif [ -f "$settings" ] && have python3; then
+  read_setting() {
+    python3 -c 'import json,sys
+d=json.load(open(sys.argv[1]))
+for k in sys.argv[2].split("."):
+    d=d.get(k) if isinstance(d,dict) else None
+print("" if d is None else d)' "$settings" "$1" 2>/dev/null || echo "?"
+  }
+  model="$(read_setting model)"; effort="$(read_setting effortLevel)"; mode="$(read_setting permissions.defaultMode)"
+  case "$model" in *opus*) ok "settings.json model: $model" ;; "") wrn "settings.json sets no default model (account default applies)" ;; *) wrn "settings.json model: $model (policy expects opus)" ;; esac
+  case "$effort" in high|xhigh) ok "settings.json effortLevel: $effort" ;; "") wrn "settings.json sets no effortLevel" ;; *) wrn "settings.json effortLevel: $effort (policy expects high)" ;; esac
+  if [ "$mode" = bypassPermissions ]; then
+    if [ "$(id -u)" = 0 ]; then bad "defaultMode is bypassPermissions but this user is root, where Claude Code refuses it"
+    else ok "settings.json defaultMode: bypassPermissions (new sessions start without permission prompts)"; fi
+  elif [ "$want_bypass" = 1 ]; then
+    bad "settings.json defaultMode is '${mode:-unset}', not bypassPermissions"
+  else
+    ok "settings.json defaultMode: ${mode:-unset (prompts for permission)}"
+  fi
+elif [ -f "$settings" ]; then
+  wrn "cannot read settings.json without python3"
+elif [ "$want_bypass" = 1 ]; then
+  bad "$settings missing (bypassPermissions was requested)"
+else
+  wrn "$settings missing (account defaults apply)"
 fi
 
 # --- PATH as seen by non-interactive SSH ---------------------------------------

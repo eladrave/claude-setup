@@ -39,6 +39,7 @@ Arguments work the same with every form:
 ... | bash -s -- vmforclaude --dry-run   # preview without writing
 ... | bash -s -- --local                 # run inside a terminal on the target itself (e.g. Codex app over SSH)
 ... | bash -s -- vmforclaude --verify-only   # only run the checks
+... | bash -s -- --local --bypass-permissions # dedicated VM: no permission prompts by default
 ... | bash                               # no arguments: asks for the SSH host
 ```
 
@@ -59,17 +60,22 @@ alias claude-setup='gh api repos/eladrave/claude-setup/contents/install.sh -H "A
 2. Copies the `claude/` payload to each target over one SSH connection.
 3. On the target, resolves the config directory as `${CLAUDE_CONFIG_DIR:-~/.claude}` for the SSH login user.
 4. For each file: skips it if identical, otherwise backs up the existing copy to `~/.claude/claude-setup-backups/<timestamp>/` and writes the new one.
-5. Runs [`setup/tools.sh`](setup/tools.sh) on the target (skip with `--no-tools`):
+5. Merges keys into the target's `~/.claude/settings.json`, keeping every other key, backing up the old file, and printing exactly what changed (skip with `--no-settings`):
+   * always: `"model": "opus"` and `"effortLevel": "high"`
+   * with `--bypass-permissions`: `"permissions": {"defaultMode": "bypassPermissions"}` and `"skipDangerousModePermissionPrompt": true`, so new CLI and desktop SSH sessions start without permission prompts. Use it only on dedicated machines, and never for root (Claude Code refuses bypass mode as root). In the desktop app on Pro and Max plans you also need **Settings > Claude Code > Allow bypass permissions mode** turned on. If you already picked a mode in the app's selector for a folder, that choice wins for that folder.
+   * It never removes keys. To undo bypass, delete `defaultMode` from the file or restore the backup.
+6. Runs [`setup/tools.sh`](setup/tools.sh) on the target (skip with `--no-tools`):
    * Installs Claude Code (native installer, ~/.local/bin/claude), `gh` and `gcloud` if missing, without sudo. On Linux, `gh` goes to `~/.local/bin` and `gcloud` to `~/google-cloud-sdk` (with `gcloud`, `gsutil`, `bq` linked into `~/.local/bin`). On macOS it uses Homebrew.
    * Puts `~/.local/bin` on PATH at the top of `~/.bashrc` and in `~/.profile`, so non-interactive SSH commands (Codex remote) find the tools.
    * Signs in to `gh` if needed (device code: open the URL on any device, enter the code) and runs `gh auth setup-git`.
    * Signs in to `gcloud` if needed (`--no-launch-browser`: open the URL, paste the code back), optionally sets up Application Default Credentials, and reports the default project.
    * With `--dry-run`, only reports what is installed and signed in.
 
-6. Runs [`setup/verify.sh`](setup/verify.sh) on the target over a plain non-interactive SSH command, the same way Codex remote runs commands, and prints PASS / WARN / FAIL for:
+7. Runs [`setup/verify.sh`](setup/verify.sh) on the target over a plain non-interactive SSH command, the same way Codex remote runs commands, and prints PASS / WARN / FAIL for:
    * the user is not root (Claude Code disables `--dangerously-skip-permissions` for root)
    * `CLAUDE.md` and the `fable-escalation` agent are in place
    * `~/.local/bin` is on PATH for non-interactive shells
+   * `settings.json` is valid JSON with model opus, effort high, and (when `--bypass-permissions` was given) defaultMode bypassPermissions
    * `claude`, `gh`, `gcloud`, `git` are found (and whether one is installed in ~/.local/bin but missing from PATH)
    * `gh` is signed in and git uses its credentials; `gcloud` is signed in, has a default project, and has Application Default Credentials
    * a smoke test: `claude -p --model haiku --dangerously-skip-permissions` must name `fable-escalation` from the loaded instructions (one short Haiku prompt). If the terminal `claude` is not signed in, this is a WARN, not a FAIL: desktop app SSH sessions sign in on their own, and `claude auth login` signs in the terminal CLI.
@@ -96,10 +102,7 @@ Claude Code reads this config when a session starts, so start a new session afte
 
 To confirm a session loaded it, ask: *"List the subagent types you can launch, and quote the first heading of your user CLAUDE.md."* It should list `fable-escalation` and quote "Working instructions for Claude Code and Claude".
 
-The checks cover the rest of what you would otherwise test by hand. Two things remain manual, once per machine, inside `claude`:
-
-* `/model opus` and `/effort high` (the default model is not part of this config)
-* the first interactive `claude --dangerously-skip-permissions` run may ask you to accept the bypass-permissions warning
+The checks cover the rest of what you would otherwise test by hand. Model and effort are set by the installer now. With bypass on, the desktop app still needs its **Allow bypass permissions mode** setting (Pro and Max plans).
 
 ## Not covered
 
